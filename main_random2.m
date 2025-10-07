@@ -1,0 +1,153 @@
+close all;
+clc;clear;
+
+% Tracking a cat in a room
+% Workspace : 4 x 6, height 4 [m]
+% Camera pin hole location : (2,3,4)
+
+% Total observation time
+T0 = 0;
+Tf = 50;
+Nstep = 500;
+delt = (Tf-T0)/Nstep;
+
+% Target motion / F
+xT = [2 2]';
+xTdot = [0.05, 0.1]';
+
+% Camera state
+s = [2.3562,2.5261,0,0]';
+u = [0,0]';
+lambda = 4;
+
+% Simulation
+x_rec = [];
+z_rec = [];
+s_rec = [];
+u_rec = [];
+cam_rec = [];
+
+count_md = 0;
+count_fa = 0;
+
+for t=T0:delt:Tf
+    z = measurement_cam(s, xT, xTdot);
+    if z(1,1) < 0.5 && z(2,1) < 0.5
+        prob = rand();
+        if prob > 0.1 && prob < 0.9
+            z = measurement_cam(s, xT, xTdot);
+            u = controller(z, s, delt, u);
+        else
+            z = [NaN NaN NaN NaN]';
+            u = [0 0]';
+            count_md = count_md + 1;
+        end
+    else
+        prob = rand();
+        if prob < 0.95
+            z = [NaN NaN NaN NaN]';
+            u = [0 0]';
+        else
+            z = z_rec(end,:)';
+            %z = measurement_cam(s, [0.1*rand(),0.1*rand()]', [0.1*rand(),0.1*rand()]');
+            u = controller(z, s, delt, u);
+            count_fa = count_fa + 1;
+        end
+    end
+
+    %%%%check
+    plot(z(1,1), z(2,1),'-x');
+    axis([-0.5, 0.5, -0.5, 0.5]);
+    grid on;
+    hold on;
+    
+    x_rec = [x_rec; xT', xTdot'];
+    z_rec = [z_rec; z'];
+    s_rec = [s_rec; s'];
+    u_rec = [u_rec; u'];
+    
+    % record camera
+    psi = s(1,1);
+    phi = s(2,1);
+    % Euler rotation matrices
+    R_phi = [1, 0, 0; 0, cos(phi), sin(phi); 0, -sin(phi), cos(phi)];
+    R_psi = [cos(psi), sin(psi), 0; -sin(psi), cos(psi), 0; 0, 0, 1];
+    % compute camera center
+    C = [R_phi(3,:)*R_psi(:,1), R_phi(3,:)*R_psi(:,2), R_phi(3,:)*R_psi(:,3)];
+    P = [0, 0, lambda]';
+    k = -lambda/(C*P);
+    cam = k*R_psi'*R_phi'*[0 0 lambda]' - [0,0,-lambda]';
+    cam_rec = [cam_rec; cam'];
+    
+    % update
+    s =  kinematic_cam(s, u, delt);
+    % Spiral motion
+    % theta = 4*pi* (t-T0)/(Tf-T0) + pi/6;
+    % xTdot = (1-0.8*(t-T0)/(Tf-T0))*6*pi/(Tf-T0)*[cos(theta),sin(theta)]';
+    % zig-zag motion
+    % theta = pi/4 + pi/2 * 0.5*(1 - sign(30-t)*sign(10-t));
+    % xTdot = 0.5*[cos(theta), sin(theta)]';
+    % Random walk
+    theta = rand()*2*pi;
+    xTdot = 0.85 * [cos(theta), sin(theta)]';
+    xT = xT + xTdot*delt;
+end
+
+%%%%check
+figure;
+plot(x_rec(:,1),x_rec(:,2),'LineWidth',2);
+axis([0, 4, 0, 6]);
+grid on;
+hold on;
+plot(cam_rec(:,1),cam_rec(:,2),'LineWidth',2);
+title('Target trajectory');
+legend('Target', 'Camera');
+xlabel('$x_T$ (X in inertial frame)','Interpreter','latex','FontSize',13);
+ylabel('$y_T$ (Y in inertial frame)','Interpreter','latex','FontSize',13);
+
+figure;
+plot(z_rec(:,1),z_rec(:,2),'LineWidth',2);
+hold on;
+plot([-0.5,0.5,0.5,-0.5,-0.5],[0.5,0.5,-0.5,-0.5,0.5],'r','LineWidth',2);
+grid on;
+axis equal;
+title('Target in camera frame');
+xlabel('$p_x$','Interpreter','latex','FontSize',13);
+ylabel('$p_y$','Interpreter','latex','FontSize',13);
+
+time = T0:delt:Tf;
+figure();
+subplot(2,1,1);
+plot(time, s_rec(:,1)*180/pi);
+title('Camera angle');
+ylabel('$\psi$', 'Interpreter', 'latex','FontSize',13);
+xlabel('t (sec)','FontSize',13);
+grid on;
+subplot(2,1,2);
+plot(time, s_rec(:,2)*180/pi);
+grid on;
+ylabel('$\phi$', 'Interpreter', 'latex','FontSize',13);
+xlabel('t (sec)','FontSize',13);
+
+figure();
+subplot(2,1,1);
+plot(time, u_rec(:,1));
+title('Voltage input');
+ylabel('$u_1$ (V)', 'Interpreter', 'latex','FontSize',13);
+xlabel('t (sec)','FontSize',13);
+grid on;
+subplot(2,1,2);
+plot(time, u_rec(:,2));
+ylabel('$u_2$ (V)', 'Interpreter', 'latex','FontSize',13);
+xlabel('t (sec)','FontSize',13);
+grid on;
+
+figure();
+compass(cam_rec(:,1)-x_rec(:,1), cam_rec(:,2)-x_rec(:,2));
+mean = 0;
+for i = 1:Nstep+1
+    mean = mean + ((cam_rec(i,1)-x_rec(i,1))^2 + (cam_rec(i,2)-x_rec(i,2))^2)^0.5;
+end
+mean = mean/(Nstep+1);
+
+figure();
